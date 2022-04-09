@@ -3,6 +3,7 @@
 Remake de https://en.wikipedia.org/wiki/Asteroids_(video_game)
 
 Thème: Delay the inevitable.
+
 Idée orginale:
 
 On contrôlerait un dino en jetpack avec par exemple des yeux qui envoient des lasers (le dernier espoir pour la terre).
@@ -12,6 +13,7 @@ Au final la comète s'abat sur terre, et c'est comme ça que disparaissent les d
 Avec une mini intro (un texte, quelques images) pour expliquer le contexte et une animation avec le crash de fin.
 
 Identité visuelle : des formes géométriques simples avec rapier et couleur primaires.
+
 Notre dino:
 
 ![rendu du dino](doc/dino.png)
