@@ -1,6 +1,10 @@
 use bevy::prelude::*;
 use bevy_prototype_lyon::prelude::*;
 use bevy_rapier2d::prelude::*;
+use rand::seq::SliceRandom;
+use rand::{thread_rng, Rng};
+
+// FIXME: refactor in bevy plugins
 
 const PIXEL_TO_METERS: f32 = 0.02;
 
@@ -19,6 +23,8 @@ fn main() {
         .add_startup_stage("game_setup_actors", SystemStage::single(player_spawn))
         .add_system(player)
         .add_system(movement)
+        .add_system(jetpack)
+        .add_system(particles)
         .run();
 }
 
@@ -41,6 +47,92 @@ impl Default for Movement {
         Movement {
             rotation: None,
             propulsion: false,
+        }
+    }
+}
+
+#[derive(Component)]
+struct Particle {
+    lifetime: i32,
+    direction: Vec2,
+}
+
+const JETPACK_PARTICLE_COLORS: [&'static str; 3] = ["fff200", "ed1c24", "ff7f27"];
+const JETPACK_PARTICLE_LIFETIME: i32 = 20;
+
+impl Particle {
+    fn new(direction: Vec2, lifetime: i32) -> Self {
+        Particle {
+            lifetime,
+            direction,
+        }
+    }
+}
+
+fn jetpack(
+    mut commands: Commands,
+    query: Query<(&Movement, &RigidBodyPositionComponent), With<Player>>,
+) {
+    let (movement, rb_pos) = query.single();
+    if movement.propulsion {
+        let angle = rb_pos.position.rotation.angle();
+        let particle_direction = Vec2::new(angle.sin(), -angle.cos());
+        let center = rb_pos.position.translation.vector;
+
+        let mut spawn_particle = |offset: f32| {
+            let shape = shapes::Rectangle {
+                extents: Vec2::new(0.7, 0.7),
+                origin: shapes::RectangleOrigin::Center,
+            };
+            let mut rng = thread_rng();
+            let color = Color::hex(JETPACK_PARTICLE_COLORS.choose(&mut rng).unwrap()).unwrap();
+            commands
+                .spawn()
+                .insert(Particle::new(
+                    particle_direction.into(),
+                    JETPACK_PARTICLE_LIFETIME,
+                ))
+                .insert_bundle(GeometryBuilder::build_as(
+                    &shape,
+                    DrawMode::Fill(FillMode::color(color)),
+                    Transform::from_translation(Vec3::new(
+                        center.x
+                            + angle.cos() * offset
+                            + rng.gen_range(-0.4..0.4)
+                            + particle_direction.x * 4.,
+                        center.y
+                            + angle.sin() * offset
+                            + rng.gen_range(-0.4..0.4)
+                            + particle_direction.y * 4.,
+                        10.,
+                    )),
+                ));
+        };
+
+        spawn_particle(1.);
+        spawn_particle(-1.);
+    }
+}
+
+fn particles(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Transform, &mut Particle, &mut DrawMode)>,
+) {
+    for (entity, mut transform, mut particle, mut mode) in query.iter_mut() {
+        particle.lifetime -= 1;
+        if particle.lifetime == 0 {
+            commands.entity(entity).despawn();
+        } else {
+            let translation = &mut transform.translation;
+            translation.x += particle.direction.x * time.delta_seconds() * 10.;
+            translation.y += particle.direction.y * time.delta_seconds() * 10.;
+
+            if let DrawMode::Fill(fill_mode) = *mode {
+                let mut color = fill_mode.color;
+                color.set_a(particle.lifetime as f32 / JETPACK_PARTICLE_LIFETIME as f32);
+                *mode = DrawMode::Fill(FillMode::color(color));
+            }
         }
     }
 }
