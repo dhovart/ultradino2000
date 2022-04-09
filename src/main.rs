@@ -1,18 +1,24 @@
 use bevy::prelude::*;
+use bevy_prototype_lyon::prelude::*;
 use bevy_rapier2d::prelude::*;
+
+const PIXEL_TO_METERS: f32 = 0.02;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugin(ShapePlugin)
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugin(RapierRenderPlugin)
+        .insert_resource(ClearColor(Color::hex("1d1d1d").unwrap()))
         .insert_resource(RapierConfiguration {
             gravity: Vector::new(0., 0.),
             ..Default::default()
         })
         .add_startup_system(setup)
-        .add_system(movement)
+        .add_startup_stage("game_setup_actors", SystemStage::single(player_spawn))
         .add_system(player)
+        .add_system(movement)
         .run();
 }
 
@@ -21,7 +27,7 @@ struct Player;
 
 enum Rotation {
     LEFT,
-    RIGHT
+    RIGHT,
 }
 
 #[derive(Component)]
@@ -40,7 +46,7 @@ impl Default for Movement {
 }
 
 fn movement(input: Res<Input<KeyCode>>, mut query: Query<&mut Movement, With<Player>>) {
-	let mut movement = query.single_mut();
+    let mut movement = query.single_mut();
     movement.rotation = if input.pressed(KeyCode::Left) {
         Some(Rotation::LEFT)
     } else if input.pressed(KeyCode::Right) {
@@ -51,12 +57,22 @@ fn movement(input: Res<Input<KeyCode>>, mut query: Query<&mut Movement, With<Pla
     movement.propulsion = input.pressed(KeyCode::Up);
 }
 
-fn player(mut query: Query<(&Movement, &RigidBodyPositionComponent, &RigidBodyMassPropsComponent, &mut RigidBodyVelocityComponent), With<Player>>) {
-	let (movement, rb_pos, rb_mprops, mut rb_vel) = query.single_mut();
+fn player(
+    mut query: Query<
+        (
+            &Movement,
+            &RigidBodyPositionComponent,
+            &RigidBodyMassPropsComponent,
+            &mut RigidBodyVelocityComponent,
+        ),
+        With<Player>,
+    >,
+) {
+    let (movement, rb_pos, rb_mprops, mut rb_vel) = query.single_mut();
     rb_vel.angvel = match movement.rotation {
-        | Some(Rotation::LEFT) => 5.,
-        | Some(Rotation::RIGHT) => -5.,
-        | None => 0.0,
+        Some(Rotation::LEFT) => 5.,
+        Some(Rotation::RIGHT) => -5.,
+        None => 0.0,
     };
     rb_vel.linvel *= 0.99;
     let angle = rb_pos.position.rotation.angle();
@@ -64,16 +80,11 @@ fn player(mut query: Query<(&Movement, &RigidBodyPositionComponent, &RigidBodyMa
         let impulse = Vec2::new(-angle.sin() * 20., angle.cos() * 20.);
         rb_vel.apply_impulse(rb_mprops, impulse.into());
     }
-
 }
 
-fn setup(mut commands: Commands) {
-    let mut camera_bundle = OrthographicCameraBundle::new_2d();
-    camera_bundle.orthographic_projection.scale = 0.1;
-    commands.spawn_bundle(camera_bundle);
-
-    let body_width = 2.;
-    let body_height = 4.;
+fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let body_width = 110. * PIXEL_TO_METERS;
+    let body_height = 280. * PIXEL_TO_METERS;
 
     let collider = ColliderBundle {
         shape: ColliderShape::cuboid(body_width, body_height).into(),
@@ -85,18 +96,25 @@ fn setup(mut commands: Commands) {
         ..Default::default()
     };
 
+    let mut pos = Vec2::new(0.0, 20.0);
+    let mut prev_half_height = body_height;
+    let mut half_width = 0.5;
+
     let mut prev_id = commands
         .spawn_bundle(rigid_body)
         .insert_bundle(collider)
+        .insert_bundle(SpriteBundle {
+            texture: asset_server.load("dino.png"),
+            sprite: Sprite {
+                custom_size: Some(Vec2::new(body_width * 2., body_height * 2.)),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .insert(Player)
         .insert(Movement::default())
         .insert(ColliderPositionSync::Discrete)
-        .insert(ColliderDebugRender::from(Color::BLUE))
         .id();
-
-    let mut pos = Vec2::new(0.0, 20.0);
-    let mut prev_half_height = body_height;
-    let mut half_width = 0.6;
 
     for _ in 0..8 {
         let half_height = half_width * 1.2;
@@ -111,28 +129,40 @@ fn setup(mut commands: Commands) {
             ..Default::default()
         };
 
+        let shape = shapes::Rectangle {
+            extents: Vec2::new(half_width * 2., half_height * 2.),
+            origin: shapes::RectangleOrigin::Center,
+        };
+
         let id = commands
             .spawn_bundle(rigid_body)
             .insert_bundle(collider)
             .insert(ColliderPositionSync::Discrete)
-            .insert(ColliderDebugRender::from(Color::BLUE))
+            .insert_bundle(GeometryBuilder::build_as(
+                &shape,
+                DrawMode::Fill(FillMode::color(Color::hex("26b24a").unwrap())),
+                Transform::default(),
+            ))
             .id();
 
-        commands.spawn_bundle((
-            JointBuilderComponent::new(
-                RevoluteJoint::new()
-                    .local_anchor1(point![0.0, -prev_half_height])
-                    .local_anchor2(point![0.0, half_height])
-                    .limit_axis([-10.,10.]),
-                prev_id,
-                id,
-            ),
-        ));
+        commands.spawn_bundle((JointBuilderComponent::new(
+            RevoluteJoint::new()
+                .local_anchor1(point![0.0, -prev_half_height])
+                .local_anchor2(point![0.0, half_height])
+                .limit_axis([-10., 10.]),
+            prev_id,
+            id,
+        ),));
 
-        pos -= Vec2::new(0., half_height*2.);
+        pos -= Vec2::new(0., half_height * 2.);
         half_width -= 0.05;
         prev_id = id;
         prev_half_height = half_height;
     }
+}
 
+fn setup(mut commands: Commands) {
+    let mut camera_bundle = OrthographicCameraBundle::new_2d();
+    camera_bundle.orthographic_projection.scale = 0.1;
+    commands.spawn_bundle(camera_bundle);
 }

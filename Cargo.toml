@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 bevy = { version = "0.6", features = ["dynamic"] }
 bevy_rapier2d = { version = "0.12", features = [ "simd-stable", "render" ] }
+bevy_prototype_lyon = "0.4.0"
 
 # Enable only a small amount of optimization in debug mode
 [profile.dev]
