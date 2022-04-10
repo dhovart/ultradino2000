@@ -3,6 +3,7 @@ use bevy_prototype_lyon::prelude::*;
 use bevy_rapier2d::prelude::*;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use std::cmp;
 
 // FIXME: refactor in bevy plugins
 
@@ -22,43 +23,40 @@ fn main() {
         .add_startup_system(setup)
         .add_startup_stage("game_setup_actors", SystemStage::single(player_spawn))
         .add_system(player)
-        .add_system(movement)
+        .add_system(controls)
         .add_system(jetpack)
         .add_system(particles)
+        .add_system(laser_eyes)
+        .add_system(lasers)
         .run();
 }
 
 #[derive(Component)]
 struct Player;
 
-enum Rotation {
+enum Direction {
     LEFT,
     RIGHT,
 }
 
 #[derive(Component)]
-struct Movement {
-    rotation: Option<Rotation>,
+struct IsShooting(bool);
+
+#[derive(Component, Default)]
+struct Controls {
+    rotation: Option<Direction>,
     propulsion: bool,
+    shooting: bool,
 }
 
-impl Default for Movement {
-    fn default() -> Self {
-        Movement {
-            rotation: None,
-            propulsion: false,
-        }
-    }
-}
+const JETPACK_PARTICLE_COLORS: [&'static str; 3] = ["fff200", "ed1c24", "ff7f27"];
+const JETPACK_PARTICLE_LIFETIME: i32 = 20;
 
 #[derive(Component)]
 struct Particle {
     lifetime: i32,
     direction: Vec2,
 }
-
-const JETPACK_PARTICLE_COLORS: [&'static str; 3] = ["fff200", "ed1c24", "ff7f27"];
-const JETPACK_PARTICLE_LIFETIME: i32 = 20;
 
 impl Particle {
     fn new(direction: Vec2, lifetime: i32) -> Self {
@@ -69,12 +67,27 @@ impl Particle {
     }
 }
 
+#[derive(Component)]
+struct LaserRay {
+    height: f32,
+    position: Direction,
+}
+
+impl LaserRay {
+    fn new(position: Direction) -> Self {
+        LaserRay {
+            height: 0.1,
+            position,
+        }
+    }
+}
+
 fn jetpack(
     mut commands: Commands,
-    query: Query<(&Movement, &RigidBodyPositionComponent), With<Player>>,
+    query: Query<(&Controls, &RigidBodyPositionComponent), With<Player>>,
 ) {
-    let (movement, rb_pos) = query.single();
-    if movement.propulsion {
+    let (controls, rb_pos) = query.single();
+    if controls.propulsion {
         let angle = rb_pos.position.rotation.angle();
         let particle_direction = Vec2::new(angle.sin(), -angle.cos());
         let center = rb_pos.position.translation.vector;
@@ -97,20 +110,18 @@ fn jetpack(
                     DrawMode::Fill(FillMode::color(color)),
                     Transform::from_translation(Vec3::new(
                         center.x
-                            + angle.cos() * offset
-                            + rng.gen_range(-0.4..0.4)
-                            + particle_direction.x * 4.,
+                            + angle.cos() * (offset + rng.gen_range(-0.7..0.7))
+                            + particle_direction.x * 3.8,
                         center.y
-                            + angle.sin() * offset
-                            + rng.gen_range(-0.4..0.4)
-                            + particle_direction.y * 4.,
+                            + angle.sin() * (offset + rng.gen_range(-0.7..0.7))
+                            + particle_direction.y * 3.8,
                         10.,
                     )),
                 ));
         };
 
-        spawn_particle(1.);
-        spawn_particle(-1.);
+        spawn_particle(0.8);
+        spawn_particle(-0.8);
     }
 }
 
@@ -137,22 +148,102 @@ fn particles(
     }
 }
 
-fn movement(input: Res<Input<KeyCode>>, mut query: Query<&mut Movement, With<Player>>) {
-    let mut movement = query.single_mut();
-    movement.rotation = if input.pressed(KeyCode::Left) {
-        Some(Rotation::LEFT)
+fn laser_eyes(
+    mut commands: Commands,
+    mut query: Query<(&Controls, &mut IsShooting), With<Player>>,
+) {
+    let (controls, mut is_shooting) = query.single_mut();
+    if let IsShooting(false) = *is_shooting {
+        if controls.shooting {
+            *is_shooting = IsShooting(true);
+
+            let color = Color::hex("ed1c24").unwrap();
+            let line = shapes::Line(Vec2::ZERO, Vec2::ZERO);
+            let mut spawn_laser = |position: Direction| {
+                commands
+                    .spawn()
+                    .insert(LaserRay::new(position))
+                    .insert_bundle(GeometryBuilder::build_as(
+                        &line,
+                        DrawMode::Stroke(StrokeMode::new(color, 0.1)),
+                        Transform::default(),
+                    ));
+            };
+            spawn_laser(Direction::LEFT);
+            spawn_laser(Direction::RIGHT);
+        }
+    } else {
+        *is_shooting = IsShooting(controls.shooting);
+    }
+}
+
+fn lasers(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut ray_query: Query<(
+        Entity,
+        &mut Transform,
+        &mut Path,
+        &mut DrawMode,
+        &mut LaserRay,
+    )>,
+    player_query: Query<(&Controls, &RigidBodyPositionComponent), With<Player>>,
+) {
+    let (controls, rb_pos) = player_query.single();
+
+    let angle = rb_pos.position.rotation.angle();
+    let direction = Vec2::new(-angle.sin(), angle.cos());
+    let center = rb_pos.position.translation.vector;
+
+    for (entity, mut transform, mut path, mut mode, mut laser) in ray_query.iter_mut() {
+        if !controls.shooting {
+            commands.entity(entity).despawn();
+        } else {
+            let offset = match laser.position {
+                Direction::LEFT => -0.22,
+                Direction::RIGHT => 0.28,
+            };
+
+            laser.height += 150. * time.delta_seconds();
+            let line = shapes::Line(Vec2::ZERO, direction * laser.height);
+            *path = ShapePath::build_as(&line);
+            transform.translation = Vec3::new(
+                center.x + angle.cos() * offset + direction.x * 5.,
+                center.y + angle.sin() * offset + direction.y * 5.,
+                11.,
+            );
+
+            if let DrawMode::Stroke(stroke_mode) = *mode {
+                let color = stroke_mode.color;
+                let min_width = 0.1;
+                let width = stroke_mode.options.line_width;
+                let width = width + (time.seconds_since_startup() as f32 * 60.).sin() * 0.1;
+                let width = width.max(min_width);
+                *mode = DrawMode::Stroke(StrokeMode::new(color, width));
+            }
+        }
+
+        // TODO: check for collisions casting a ray
+    }
+}
+
+fn controls(input: Res<Input<KeyCode>>, mut query: Query<&mut Controls, With<Player>>) {
+    let mut controls = query.single_mut();
+    controls.rotation = if input.pressed(KeyCode::Left) {
+        Some(Direction::LEFT)
     } else if input.pressed(KeyCode::Right) {
-        Some(Rotation::RIGHT)
+        Some(Direction::RIGHT)
     } else {
         None
     };
-    movement.propulsion = input.pressed(KeyCode::Up);
+    controls.propulsion = input.pressed(KeyCode::Up);
+    controls.shooting = input.pressed(KeyCode::Space);
 }
 
 fn player(
     mut query: Query<
         (
-            &Movement,
+            &Controls,
             &RigidBodyPositionComponent,
             &RigidBodyMassPropsComponent,
             &mut RigidBodyVelocityComponent,
@@ -160,15 +251,15 @@ fn player(
         With<Player>,
     >,
 ) {
-    let (movement, rb_pos, rb_mprops, mut rb_vel) = query.single_mut();
-    rb_vel.angvel = match movement.rotation {
-        Some(Rotation::LEFT) => 5.,
-        Some(Rotation::RIGHT) => -5.,
+    let (controls, rb_pos, rb_mprops, mut rb_vel) = query.single_mut();
+    rb_vel.angvel = match controls.rotation {
+        Some(Direction::LEFT) => 5.,
+        Some(Direction::RIGHT) => -5.,
         None => 0.0,
     };
     rb_vel.linvel *= 0.99;
     let angle = rb_pos.position.rotation.angle();
-    if movement.propulsion {
+    if controls.propulsion {
         let impulse = Vec2::new(-angle.sin() * 20., angle.cos() * 20.);
         rb_vel.apply_impulse(rb_mprops, impulse.into());
     }
@@ -204,7 +295,8 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
             ..Default::default()
         })
         .insert(Player)
-        .insert(Movement::default())
+        .insert(IsShooting(false))
+        .insert(Controls::default())
         .insert(ColliderPositionSync::Discrete)
         .id();
 
