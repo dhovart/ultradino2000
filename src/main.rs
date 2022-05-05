@@ -1,13 +1,11 @@
+// Bevy
 use bevy::prelude::*;
 use bevy_prototype_lyon::prelude::*;
 use bevy_rapier2d::prelude::*;
+
+// Rand
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
-use std::cmp;
-
-// FIXME: refactor in bevy plugins
-
-const PIXEL_TO_METERS: f32 = 0.02;
 
 fn main() {
     App::new()
@@ -28,6 +26,8 @@ fn main() {
         .add_system(particles)
         .add_system(laser_eyes)
         .add_system(lasers)
+        .add_system(asteroids)
+        .add_system(move_asteroids)
         .run();
 }
 
@@ -49,7 +49,8 @@ struct Controls {
     shooting: bool,
 }
 
-const JETPACK_PARTICLE_COLORS: [&'static str; 3] = ["fff200", "ed1c24", "ff7f27"];
+const PIXEL_TO_METERS: f32 = 0.02;
+const JETPACK_PARTICLE_COLORS: [&str; 3] = ["fff200", "ed1c24", "ff7f27"];
 const JETPACK_PARTICLE_LIFETIME: i32 = 20;
 
 #[derive(Component)]
@@ -79,6 +80,38 @@ impl LaserRay {
             height: 0.1,
             position,
         }
+    }
+}
+
+#[derive(Component)]
+struct Asteroid;
+
+/// Systems ///////////////////////////////////////////////////////////////////
+
+fn asteroids(mut commands: Commands, query: Query<&mut Transform>) {
+    //commands.entity(query.get(entity)).despawn();
+
+    let shape = shapes::RegularPolygon {
+        sides: 9,
+        feature: shapes::RegularPolygonFeature::Radius(10.0),
+        ..shapes::RegularPolygon::default()
+    };
+
+    commands
+        .spawn()
+        .insert(Asteroid)
+        .insert_bundle(GeometryBuilder::build_as(
+            &shape,
+            DrawMode::Fill(FillMode::color(Color::rgb(0.5, 0.5, 0.5))),
+            Transform::default(),
+        ));
+}
+
+fn move_asteroids(mut query: Query<&mut Transform, With<Asteroid>>, time: Res<Time>) {
+    let delta = time.delta_seconds();
+
+    for mut transform in query.iter_mut() {
+        transform.rotate(Quat::from_rotation_z(0.2 * delta));
     }
 }
 
@@ -265,6 +298,8 @@ fn player(
     }
 }
 
+/// Startup stage ////////////////////////////////////////////////////////////
+
 fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
     let body_width = 110. * PIXEL_TO_METERS;
     let body_height = 280. * PIXEL_TO_METERS;
@@ -345,8 +380,30 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
     }
 }
 
+/// Startup system ///////////////////////////////////////////////////////////
+
 fn setup(mut commands: Commands) {
     let mut camera_bundle = OrthographicCameraBundle::new_2d();
     camera_bundle.orthographic_projection.scale = 0.1;
     commands.spawn_bundle(camera_bundle);
 }
+
+// fn setup_system(mut commands: Commands) {
+//     let shape = shapes::RegularPolygon {
+//         sides: 6,
+//         feature: shapes::RegularPolygonFeature::Radius(200.0),
+//         ..shapes::RegularPolygon::default()
+//     };
+
+//     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+//     commands
+//         .spawn_bundle(GeometryBuilder::build_as(
+//             &shape,
+//             DrawMode::Outlined {
+//                 fill_mode: FillMode::color(Color::CYAN),
+//                 outline_mode: StrokeMode::new(Color::BLACK, 10.0),
+//             },
+//             Transform::default(),
+//         ))
+//         .insert(ExampleShape);
+// }

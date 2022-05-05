@@ -24,31 +24,31 @@ Post-processing: pixellisation (+ aberation chromatique ?)
 
 Yvan:
 
-- [ ] Faire bouger le fond quand le dino s'approche de l'un des bords (restreindre le dino dans un rectangle un peu réduit par rapport à l'écran)
-- [ ] Les astéroïdes (un gros paquet de triangles qui se subdivise)
-- [ ] camera dynamique, en cas de dégât : trembler
-- [ ] Barre de vie / Barre de score (nombre d'astéroïdes détruit ? (+ score de l'astéroïde == taille) temps de survie (+1/s) ?)
-- [ ] Ecran "Game Over"
+-   [ ] Faire bouger le fond quand le dino s'approche de l'un des bords (restreindre le dino dans un rectangle un peu réduit par rapport à l'écran)
+-   [ ] Les astéroïdes (un gros paquet de triangles qui se subdivise)
+-   [ ] camera dynamique, en cas de dégât : trembler
+-   [ ] Barre de vie / Barre de score (nombre d'astéroïdes détruit ? (+ score de l'astéroïde == taille) temps de survie (+1/s) ?)
+-   [ ] Ecran "Game Over"
 
 Denis:
 
-- [ ] level design : générer et faire arriver des astéroides de façon progressive (taille + fréquence)
-- [ ] Animer le lancer de laser ? (épaisseur peut varier avec du bruit pour montrer l'intensité du rayon)
-- [ ] Est-ce que la rayon surchauffe ? à besoin de se recharger ? ou ...
-- [ ] Lvl-up à chaque météore explosé ? -> rayon plus puissant ? (barre de rayon)
-- [ ] JetPack generateur de particule
+-   [ ] level design : générer et faire arriver des astéroides de façon progressive (taille + fréquence)
+-   [x] Animer le lancer de laser ? (épaisseur peut varier avec du bruit pour montrer l'intensité du rayon)
+-   [ ] Est-ce que la rayon surchauffe ? à besoin de se recharger ? ou ...
+-   [ ] Lvl-up à chaque météore explosé ? -> rayon plus puissant ? (barre de rayon)
+-   [x] JetPack generateur de particule
 
 ## 15-21 Avril
 
 Yvan:
 
-- [ ] Le post-processing (rendu pixellisé)
-- [ ] Menu: Un joli écran titre / high score ?
+-   [ ] Le post-processing (rendu pixellisé)
+-   [ ] Menu: Un joli écran titre / high score ?
 
 Denis:
 
-- [ ] Mini animation (contexte presentation de la comète) / histoire lancement de jeu
-- [ ] Réfléchir à un gameplay pour la comète (afficher le score sur une barre de progression)
+-   [ ] Mini animation (contexte presentation de la comète) / histoire lancement de jeu
+-   [ ] Réfléchir à un gameplay pour la comète (afficher le score sur une barre de progression)
 
 ## Deadline 21 Avril
 
