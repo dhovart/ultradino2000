@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.6", features = ["dynamic"] }
-bevy_rapier2d = { version = "0.12", features = [ "simd-stable", "render" ] }
-bevy_prototype_lyon = "0.4.0"
+bevy = { version = "0.9", features = ["dynamic"] }
+bevy_rapier2d = { version = "0.20", features = [ "simd-stable" ] }
+bevy_prototype_lyon = "0.7.2"
 rand = "0.8.5"
 
 # Enable only a small amount of optimization in debug mode

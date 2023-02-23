@@ -1,9 +1,10 @@
 use bevy::prelude::*;
+use bevy_prototype_lyon::prelude::FillMode;
 use bevy_prototype_lyon::prelude::*;
 use bevy_rapier2d::prelude::*;
+
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
-use std::cmp;
 
 // FIXME: refactor in bevy plugins
 
@@ -13,11 +14,11 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
-        .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugin(RapierRenderPlugin)
+        .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.))
+        .add_plugin(RapierDebugRenderPlugin::default())
         .insert_resource(ClearColor(Color::hex("1d1d1d").unwrap()))
         .insert_resource(RapierConfiguration {
-            gravity: Vector::new(0., 0.),
+            gravity: Vec2::new(0., 0.),
             ..Default::default()
         })
         .add_startup_system(setup)
@@ -34,6 +35,7 @@ fn main() {
 #[derive(Component)]
 struct Player;
 
+#[derive(Debug)]
 enum Direction {
     LEFT,
     RIGHT,
@@ -42,7 +44,7 @@ enum Direction {
 #[derive(Component)]
 struct IsShooting(bool);
 
-#[derive(Component, Default)]
+#[derive(Component, Default, Debug)]
 struct Controls {
     rotation: Option<Direction>,
     propulsion: bool,
@@ -81,16 +83,12 @@ impl LaserRay {
         }
     }
 }
-
-fn jetpack(
-    mut commands: Commands,
-    query: Query<(&Controls, &RigidBodyPositionComponent), With<Player>>,
-) {
-    let (controls, rb_pos) = query.single();
+fn jetpack(mut commands: Commands, query: Query<(&Controls, &Transform), With<Player>>) {
+    let (controls, rb_transform) = query.single();
     if controls.propulsion {
-        let angle = rb_pos.position.rotation.angle();
-        let particle_direction = Vec2::new(angle.sin(), -angle.cos());
-        let center = rb_pos.position.translation.vector;
+        let rotation_as_vector = rb_transform.rotation.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+        let particle_direction = Vec2::new(rotation_as_vector.x, rotation_as_vector.y) * -1.;
+        let center = rb_transform.translation;
 
         let mut spawn_particle = |offset: f32| {
             let shape = shapes::Rectangle {
@@ -100,20 +98,20 @@ fn jetpack(
             let mut rng = thread_rng();
             let color = Color::hex(JETPACK_PARTICLE_COLORS.choose(&mut rng).unwrap()).unwrap();
             commands
-                .spawn()
+                .spawn_empty()
                 .insert(Particle::new(
                     particle_direction.into(),
                     JETPACK_PARTICLE_LIFETIME,
                 ))
-                .insert_bundle(GeometryBuilder::build_as(
+                .insert(GeometryBuilder::build_as(
                     &shape,
                     DrawMode::Fill(FillMode::color(color)),
                     Transform::from_translation(Vec3::new(
                         center.x
-                            + angle.cos() * (offset + rng.gen_range(-0.7..0.7))
+                            + rotation_as_vector.x.cos() * (offset + rng.gen_range(-0.7..0.7))
                             + particle_direction.x * 3.8,
                         center.y
-                            + angle.sin() * (offset + rng.gen_range(-0.7..0.7))
+                            + rotation_as_vector.y.cos() * (offset + rng.gen_range(-0.7..0.7))
                             + particle_direction.y * 3.8,
                         10.,
                     )),
@@ -161,9 +159,9 @@ fn laser_eyes(
             let line = shapes::Line(Vec2::ZERO, Vec2::ZERO);
             let mut spawn_laser = |position: Direction| {
                 commands
-                    .spawn()
+                    .spawn_empty()
                     .insert(LaserRay::new(position))
-                    .insert_bundle(GeometryBuilder::build_as(
+                    .insert(GeometryBuilder::build_as(
                         &line,
                         DrawMode::Stroke(StrokeMode::new(color, 0.1)),
                         Transform::default(),
@@ -186,14 +184,14 @@ fn lasers(
         &mut Path,
         &mut DrawMode,
         &mut LaserRay,
-    )>,
-    player_query: Query<(&Controls, &RigidBodyPositionComponent), With<Player>>,
+    ), Without<Player>>,
+    player_query: Query<(&Controls, &Transform), With<Player>>,
 ) {
-    let (controls, rb_pos) = player_query.single();
+    let (controls, rb_transform) = player_query.single();
 
-    let angle = rb_pos.position.rotation.angle();
-    let direction = Vec2::new(-angle.sin(), angle.cos());
-    let center = rb_pos.position.translation.vector;
+    let rotation_as_vector = rb_transform.rotation.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+    let direction = Vec2::new(rotation_as_vector.x, rotation_as_vector.y);
+    let center = rb_transform.translation;
 
     for (entity, mut transform, mut path, mut mode, mut laser) in ray_query.iter_mut() {
         if !controls.shooting {
@@ -208,8 +206,8 @@ fn lasers(
             let line = shapes::Line(Vec2::ZERO, direction * laser.height);
             *path = ShapePath::build_as(&line);
             transform.translation = Vec3::new(
-                center.x + angle.cos() * offset + direction.x * 5.,
-                center.y + angle.sin() * offset + direction.y * 5.,
+                center.x + rotation_as_vector.x.cos() * offset + direction.x * 5.,
+                center.y + rotation_as_vector.y.sin() * offset + direction.y * 5.,
                 11.,
             );
 
@@ -217,7 +215,7 @@ fn lasers(
                 let color = stroke_mode.color;
                 let min_width = 0.1;
                 let width = stroke_mode.options.line_width;
-                let width = width + (time.seconds_since_startup() as f32 * 60.).sin() * 0.1;
+                let width = width + (time.elapsed_seconds() * 60.).sin() * 0.1;
                 let width = width.max(min_width);
                 *mode = DrawMode::Stroke(StrokeMode::new(color, width));
             }
@@ -241,55 +239,40 @@ fn controls(input: Res<Input<KeyCode>>, mut query: Query<&mut Controls, With<Pla
 }
 
 fn player(
-    mut query: Query<
-        (
-            &Controls,
-            &RigidBodyPositionComponent,
-            &RigidBodyMassPropsComponent,
-            &mut RigidBodyVelocityComponent,
-        ),
-        With<Player>,
-    >,
+    mut query: Query<(&Controls, &Transform, &mut Velocity, &mut ExternalImpulse), With<Player>>,
 ) {
-    let (controls, rb_pos, rb_mprops, mut rb_vel) = query.single_mut();
-    rb_vel.angvel = match controls.rotation {
+    let (controls, transform, mut velocity, mut impulse) = query.single_mut();
+    velocity.angvel = match controls.rotation {
         Some(Direction::LEFT) => 5.,
         Some(Direction::RIGHT) => -5.,
         None => 0.0,
     };
-    rb_vel.linvel *= 0.99;
-    let angle = rb_pos.position.rotation.angle();
+
+    let vector = transform.rotation.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+    let direction = Vec2::new(vector.x, vector.y);
     if controls.propulsion {
-        let impulse = Vec2::new(-angle.sin() * 20., angle.cos() * 20.);
-        rb_vel.apply_impulse(rb_mprops, impulse.into());
+        impulse.impulse = direction * 0.5;
     }
 }
 
 fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let body_width = 110. * PIXEL_TO_METERS;
-    let body_height = 280. * PIXEL_TO_METERS;
+    let half_body_width = 110. * PIXEL_TO_METERS;
+    let half_body_height = 280. * PIXEL_TO_METERS;
 
-    let collider = ColliderBundle {
-        shape: ColliderShape::cuboid(body_width, body_height).into(),
-        ..Default::default()
-    };
+    let collider = Collider::cuboid(half_body_width, half_body_height);
 
-    let rigid_body = RigidBodyBundle {
-        position: Vec2::new(0.0, 20. + body_height).into(),
-        ..Default::default()
-    };
-
-    let mut pos = Vec2::new(0.0, 20.0);
-    let mut prev_half_height = body_height;
-    let mut half_width = 0.5;
+    let transform = Transform::from_xyz(0.0, half_body_height, 0.);
 
     let mut prev_id = commands
-        .spawn_bundle(rigid_body)
-        .insert_bundle(collider)
-        .insert_bundle(SpriteBundle {
+        .spawn(RigidBody::Dynamic)
+        .insert(collider)
+        .insert(TransformBundle::from(transform))
+        .insert(Velocity::default())
+        .insert(ExternalImpulse::default())
+        .insert(SpriteBundle {
             texture: asset_server.load("dino.png"),
             sprite: Sprite {
-                custom_size: Some(Vec2::new(body_width * 2., body_height * 2.)),
+                custom_size: Some(Vec2::new(half_body_width * 2., half_body_height * 2.)),
                 ..Default::default()
             },
             ..Default::default()
@@ -297,48 +280,39 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
         .insert(Player)
         .insert(IsShooting(false))
         .insert(Controls::default())
-        .insert(ColliderPositionSync::Discrete)
         .id();
+
+    let mut pos_y = -half_body_height - 0.7;
+    let mut prev_half_height = half_body_height;
+    let mut half_width = 0.5;
 
     for _ in 0..8 {
         let half_height = half_width * 1.2;
 
-        let collider = ColliderBundle {
-            shape: ColliderShape::cuboid(half_width, half_height).into(),
-            ..Default::default()
-        };
-
-        let rigid_body = RigidBodyBundle {
-            position: pos.into(),
-            ..Default::default()
-        };
+        let collider = Collider::cuboid(half_width, half_height);
 
         let shape = shapes::Rectangle {
             extents: Vec2::new(half_width * 2., half_height * 2.),
             origin: shapes::RectangleOrigin::Center,
         };
 
+        let joint = RevoluteJointBuilder::new()
+            .local_anchor1(Vec2::new(0.0, -prev_half_height))
+            .local_anchor2(Vec2::new(0.0, half_height))
+            .limits([-10., 10.]);
+
         let id = commands
-            .spawn_bundle(rigid_body)
-            .insert_bundle(collider)
-            .insert(ColliderPositionSync::Discrete)
-            .insert_bundle(GeometryBuilder::build_as(
+            .spawn(RigidBody::Dynamic)
+            .insert(collider)
+            .insert(GeometryBuilder::build_as(
                 &shape,
                 DrawMode::Fill(FillMode::color(Color::hex("26b24a").unwrap())),
-                Transform::default(),
+                Transform::from_xyz(0., pos_y, 0.),
             ))
+            .insert(ImpulseJoint::new(prev_id, joint))
             .id();
 
-        commands.spawn_bundle((JointBuilderComponent::new(
-            RevoluteJoint::new()
-                .local_anchor1(point![0.0, -prev_half_height])
-                .local_anchor2(point![0.0, half_height])
-                .limit_axis([-10., 10.]),
-            prev_id,
-            id,
-        ),));
-
-        pos -= Vec2::new(0., half_height * 2.);
+        pos_y -= half_height * 2.;
         half_width -= 0.05;
         prev_id = id;
         prev_half_height = half_height;
@@ -346,7 +320,11 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 fn setup(mut commands: Commands) {
-    let mut camera_bundle = OrthographicCameraBundle::new_2d();
-    camera_bundle.orthographic_projection.scale = 0.1;
-    commands.spawn_bundle(camera_bundle);
+    commands.spawn(Camera2dBundle {
+        projection: OrthographicProjection {
+            scale: 0.1,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 }
