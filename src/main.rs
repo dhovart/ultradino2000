@@ -1,8 +1,12 @@
 use bevy::prelude::*;
 use bevy_prototype_lyon::prelude::FillMode;
 use bevy_prototype_lyon::prelude::*;
+use bevy_prototype_lyon::shapes::Polygon;
+
+use bevy_rapier2d::na::Point2;
 use bevy_rapier2d::prelude::*;
 
+use bevy_rapier2d::rapier::geometry::ConvexPolygon;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 
@@ -15,14 +19,17 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.))
-        .add_plugin(RapierDebugRenderPlugin::default())
+        //.add_plugin(RapierDebugRenderPlugin::default())
         .insert_resource(ClearColor(Color::hex("1d1d1d").unwrap()))
         .insert_resource(RapierConfiguration {
             gravity: Vec2::new(0., 0.),
             ..Default::default()
         })
         .add_startup_system(setup)
-        .add_startup_stage("game_setup_actors", SystemStage::single(player_spawn))
+        .add_startup_stage(
+            "game_setup_actors",
+            SystemStage::single(player_spawn).with_system(asteroids_spawn)
+        )
         .add_system(player)
         .add_system(controls)
         .add_system(jetpack)
@@ -178,13 +185,16 @@ fn laser_eyes(
 fn lasers(
     time: Res<Time>,
     mut commands: Commands,
-    mut ray_query: Query<(
-        Entity,
-        &mut Transform,
-        &mut Path,
-        &mut DrawMode,
-        &mut LaserRay,
-    ), Without<Player>>,
+    mut ray_query: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut Path,
+            &mut DrawMode,
+            &mut LaserRay,
+        ),
+        Without<Player>,
+    >,
     player_query: Query<(&Controls, &Transform), With<Player>>,
 ) {
     let (controls, rb_transform) = player_query.single();
@@ -202,7 +212,7 @@ fn lasers(
                 Direction::RIGHT => 0.28,
             };
 
-            laser.height += 150. * time.delta_seconds();
+            laser.height += 300. * time.delta_seconds();
             let line = shapes::Line(Vec2::ZERO, direction * laser.height);
             *path = ShapePath::build_as(&line);
             transform.translation = Vec3::new(
@@ -222,6 +232,7 @@ fn lasers(
         }
 
         // TODO: check for collisions casting a ray
+        // Scene queries
     }
 }
 
@@ -304,6 +315,7 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
         let id = commands
             .spawn(RigidBody::Dynamic)
             .insert(collider)
+            .insert(ColliderMassProperties::Density(20.0))
             .insert(GeometryBuilder::build_as(
                 &shape,
                 DrawMode::Fill(FillMode::color(Color::hex("26b24a").unwrap())),
@@ -316,6 +328,75 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
         half_width -= 0.05;
         prev_id = id;
         prev_half_height = half_height;
+    }
+}
+
+// FIXME - proper packing without collisions
+fn asteroids_spawn(mut commands: Commands) {
+    let mut i = 0;
+    let total = 20;
+    let margin = 5.;
+    let mut translations: Vec<Vec2> = Vec::with_capacity(total);
+
+    while i < 30 {
+        let mut rng = thread_rng();
+        let max_radius = 3.;
+        let area_radius = 50.;
+        let translation = Vec2::new(
+            rng.gen_range(-area_radius..area_radius),
+            rng.gen_range(-area_radius..area_radius),
+        );
+
+        let too_close_to_others_asteroid = translations.iter().any(|&other_translation| {
+            (other_translation - translation).length() <= max_radius + margin
+        });
+
+        // Player dimensions, fix me
+        let too_close_to_player = translation.x + max_radius > -110. * PIXEL_TO_METERS
+            && translation.x - max_radius < 110. * PIXEL_TO_METERS
+            && translation.y + max_radius > -280. * PIXEL_TO_METERS
+            && translation.y - max_radius < 280. * PIXEL_TO_METERS;
+
+        if too_close_to_others_asteroid || too_close_to_player {
+            continue;
+        }
+        i = i + 1;
+
+        translations.push(translation.clone());
+
+        let num_points = 20;
+        let mut vertices = Vec::with_capacity(num_points);
+        for _ in 0..num_points {
+            let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+            let radius = rng.gen_range(0.0..max_radius);
+            let x = radius * angle.cos();
+            let y = radius * angle.sin();
+            vertices.push(Vec2::new(x, y));
+        }
+
+        let asteroid_collider = Collider::convex_hull(&vertices).unwrap();
+        let points: Vec<Vec2> = asteroid_collider
+            .as_convex_polygon()
+            .unwrap()
+            .points()
+            .collect();
+        let shape = shapes::Polygon::from(Polygon {
+            points: points,
+            closed: true,
+        });
+        commands
+            .spawn(RigidBody::Dynamic)
+            .insert(asteroid_collider)
+            .insert(ColliderMassProperties::Density(10.0))
+            .insert(ExternalForce {
+                torque: rng.gen_range(-0.01..0.01),
+                force: Vec2::new(rng.gen_range(-0.2..0.2), rng.gen_range(-0.2..0.2))
+            })
+            .insert(GeometryBuilder::build_as(
+                &shape,
+                DrawMode::Fill(FillMode::color(Color::hex("444444").unwrap())),
+                Transform::from_translation(Vec3::new(translation.x, translation.y, 0.)),
+            ));
     }
 }
 
