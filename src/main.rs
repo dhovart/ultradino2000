@@ -19,6 +19,7 @@ fn main() {
         .add_plugin(ShapePlugin)
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.))
         //.add_plugin(RapierDebugRenderPlugin::default())
+        .insert_resource(Msaa { samples: 1 })
         .insert_resource(ClearColor(Color::hex("1d1d1d").unwrap()))
         .insert_resource(RapierConfiguration {
             gravity: Vec2::new(0., 0.),
