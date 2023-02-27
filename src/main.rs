@@ -1,8 +1,5 @@
 use bevy::prelude::*;
 
-use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
-
 use bevy_prototype_lyon::prelude::FillMode;
 use bevy_prototype_lyon::prelude::*;
 use bevy_prototype_lyon::shapes::Polygon;
@@ -21,7 +18,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.))
-        .add_plugin(RapierDebugRenderPlugin::default())
+        //.add_plugin(RapierDebugRenderPlugin::default())
         .insert_resource(ClearColor(Color::hex("1d1d1d").unwrap()))
         .insert_resource(RapierConfiguration {
             gravity: Vec2::new(0., 0.),
@@ -72,6 +69,9 @@ struct Particle {
     lifetime: i32,
     direction: Vec2,
 }
+
+#[derive(Component)]
+struct Destructible(bool);
 
 impl Particle {
     fn new(direction: Vec2, lifetime: i32) -> Self {
@@ -203,7 +203,10 @@ fn lasers(
         With<LaserRay>,
     >,
     player_query: Query<(Entity, &Controls, &Transform), (With<Player>, Without<LaserRay>)>,
-    asteroid_query: Query<(&Collider, &Transform), (With<Asteroid>, Without<LaserRay>)>,
+    asteroid_query: Query<
+        (&Collider, &Transform, &Destructible),
+        (With<Asteroid>, Without<LaserRay>),
+    >,
 ) {
     let (player_entity, controls, rb_transform) = player_query.single();
 
@@ -248,23 +251,63 @@ fn lasers(
             rapier_context.cast_ray(ray_pos, direction, max_toi, true, filter)
         {
             let hit_point = ray_pos + direction * toi;
-            if let Some((asteroid_collider, &asteroid_transform)) = asteroid_query.get(entity).ok()
+            if let Some((asteroid_collider, &asteroid_transform, Destructible(is_destructible))) =
+                asteroid_query.get(entity).ok()
             {
-                let sub_polys = subdivide(&asteroid_collider);
-                for sub_poly in sub_polys {
-                    commands
-                        // .spawn(Asteroid)
-                        // .insert(RigidBody::Dynamic)
-                        .spawn(RigidBody::Dynamic)
-                        .insert(sub_poly)
-                        .insert(TransformBundle::from_transform(asteroid_transform));
-                }
+                if *is_destructible {
+                    let sub_polys = subdivide(&asteroid_collider);
+                    for sub_poly in sub_polys {
+                        let points: Vec<Vec2> =
+                            sub_poly.as_convex_polygon().unwrap().points().collect();
 
-                commands.entity(entity).despawn();
+                        let is_destructible = polygon_area(&points) >= 8.;
+
+                        let shape = shapes::Polygon::from(Polygon {
+                            points: points,
+                            closed: true,
+                        });
+
+                        let mut rng = thread_rng();
+                        let entity = commands
+                            .spawn(Asteroid)
+                            .insert(RigidBody::Dynamic)
+                            .insert(sub_poly)
+                            .insert(Destructible(is_destructible))
+                            .insert(ExternalImpulse {
+                                torque_impulse: rng.gen_range(-0.02..0.02),
+                                ..Default::default()
+                            })
+                            .insert(GeometryBuilder::build_as(
+                                &shape,
+                                DrawMode::Fill(FillMode::color(Color::hex("444444").unwrap())),
+                                asteroid_transform,
+                            ))
+                            .id();
+
+                        if !is_destructible {
+                            commands.entity(entity).insert(Particle::new(
+                                Vec2::new(0., 0.),
+                                JETPACK_PARTICLE_LIFETIME,
+                            ));
+                        }
+                    }
+
+                    commands.entity(entity).despawn();
+                }
             }
             println!("Entity {:?} hit at point {}", entity, hit_point);
         }
     }
+}
+
+fn polygon_area(vertices: &Vec<Vec2>) -> f32 {
+    let mut sum = 0.0;
+    for i in 0..vertices.len() {
+        let v1 = vertices[i];
+        let v2 = vertices[(i + 1) % vertices.len()];
+        sum += v1.x * v2.y - v1.y * v2.x;
+    }
+    sum.abs() / 2.0
 }
 
 fn subdivide(collider: &Collider) -> Vec<Collider> {
@@ -282,6 +325,10 @@ fn subdivide(collider: &Collider) -> Vec<Collider> {
                 triangle1.append(&mut triangle2);
             }
             Collider::convex_hull(&triangle1)
+        })
+        .filter(|collider| {
+            let new_vertices: Vec<Vec2> = collider.as_convex_polygon().unwrap().points().collect();
+            vertices != new_vertices
         })
         .collect();
     colliders
@@ -396,7 +443,7 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
         let id = commands
             .spawn(RigidBody::Dynamic)
             .insert(collider)
-            .insert(ColliderMassProperties::Density(20.0))
+            .insert(ColliderMassProperties::Density(50.0))
             .insert(GeometryBuilder::build_as(
                 &shape,
                 DrawMode::Fill(FillMode::color(Color::hex("26b24a").unwrap())),
@@ -417,7 +464,7 @@ fn asteroids_spawn(mut commands: Commands) {
     let total = 20;
     let margin = 5.;
     let mut translations: Vec<Vec2> = Vec::with_capacity(total);
-    let max_radius = 10.;
+    let max_radius = 6.;
 
     while i < 30 {
         let mut rng = thread_rng();
@@ -444,7 +491,7 @@ fn asteroids_spawn(mut commands: Commands) {
 
         translations.push(translation.clone());
 
-        let num_points = 20;
+        let num_points = 50;
         let mut vertices = Vec::with_capacity(num_points);
         for _ in 0..num_points {
             let angle = rng.gen_range(0.0..std::f32::consts::TAU);
@@ -467,6 +514,7 @@ fn asteroids_spawn(mut commands: Commands) {
         commands
             .spawn(Asteroid)
             .insert(RigidBody::Dynamic)
+            .insert(Destructible(true))
             .insert(asteroid_collider)
             .insert(ColliderMassProperties::Density(10.0))
             .insert(ExternalForce {
