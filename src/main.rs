@@ -35,6 +35,7 @@ fn main() {
         .add_system(particles)
         .add_system(laser_eyes)
         .add_system(lasers)
+        .add_system(camera)
         .add_system(bevy::window::close_on_esc)
         .run();
 }
@@ -126,7 +127,7 @@ fn jetpack(mut commands: Commands, query: Query<(&Controls, &Transform), With<Pl
                         center.y
                             + rotation_as_vector.y.cos() * (offset + rng.gen_range(-0.7..0.7))
                             + particle_direction.y * 3.8,
-                        10.,
+                        0.1,
                     )),
                 ));
         };
@@ -206,7 +207,7 @@ fn lasers(
     asteroid_query: Query<
         (&Collider, &Transform, &Destructible),
         (With<Asteroid>, Without<LaserRay>),
-    >,
+    >
 ) {
     let (player_entity, controls, rb_transform) = player_query.single();
 
@@ -230,7 +231,7 @@ fn lasers(
             transform.translation = Vec3::new(
                 center.x + rotation_as_vector.x.cos() * offset + direction.x * 5.,
                 center.y + rotation_as_vector.y.sin() * offset + direction.y * 5.,
-                11.,
+                0.2,
             );
 
             if let DrawMode::Stroke(stroke_mode) = *mode {
@@ -443,7 +444,7 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
         let id = commands
             .spawn(RigidBody::Dynamic)
             .insert(collider)
-            .insert(ColliderMassProperties::Density(50.0))
+            .insert(ColliderMassProperties::Density(20.0))
             .insert(GeometryBuilder::build_as(
                 &shape,
                 DrawMode::Fill(FillMode::color(Color::hex("26b24a").unwrap())),
@@ -527,6 +528,16 @@ fn asteroids_spawn(mut commands: Commands) {
                 Transform::from_translation(Vec3::new(translation.x, translation.y, 0.)),
             ));
     }
+}
+
+fn camera(
+    mut camera_transform_query: Query<&mut Transform, (With<Camera2d>, Without<Player>)>,
+    player_transform_query: Query<&Transform, With<Player>>,
+) {
+    let mut camera_transform = camera_transform_query.single_mut();
+    let player_transform = player_transform_query.single();
+    camera_transform.translation = player_transform.translation;
+    camera_transform.translation.z = 1.;
 }
 
 fn setup(mut commands: Commands) {
