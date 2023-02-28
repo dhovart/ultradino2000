@@ -1,8 +1,21 @@
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    reflect::TypeUuid,
+    render::{
+        camera::{Camera, RenderTarget},
+        render_resource::{
+            AsBindGroup, Extent3d, ShaderRef, TextureDescriptor, TextureDimension, TextureFormat,
+            TextureUsages,
+        },
+        view::RenderLayers,
+    },
+    sprite::{Material2d, Material2dPlugin, MaterialMesh2dBundle},
+};
 
-use bevy_prototype_lyon::prelude::FillMode;
-use bevy_prototype_lyon::prelude::*;
-use bevy_prototype_lyon::shapes::Polygon;
+use bevy_prototype_lyon::{
+    prelude::{*, FillMode},
+    shapes::Polygon
+};
 
 use bevy_rapier2d::prelude::*;
 
@@ -13,12 +26,26 @@ use rand::{thread_rng, Rng};
 
 const PIXEL_TO_METERS: f32 = 0.02;
 
+#[derive(AsBindGroup, TypeUuid, Clone)]
+#[uuid = "b17e3ec0-b8e2-4b66-a62e-1ed9f4374350"]
+struct PostProcessingMaterial {
+    #[texture(0)]
+    #[sampler(1)]
+    source_image: Handle<Image>,
+}
+
+impl Material2d for PostProcessingMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/custom_material_chromatic_aberration.wgsl".into()
+    }
+}
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.))
         //.add_plugin(RapierDebugRenderPlugin::default())
+        .add_plugin(Material2dPlugin::<PostProcessingMaterial>::default())
         .insert_resource(Msaa { samples: 1 })
         .insert_resource(ClearColor(Color::hex("1d1d1d").unwrap()))
         .insert_resource(RapierConfiguration {
@@ -43,6 +70,9 @@ fn main() {
 
 #[derive(Component)]
 struct Player;
+
+#[derive(Component)]
+struct MainCamera;
 
 #[derive(Component)]
 struct Asteroid;
@@ -208,7 +238,7 @@ fn lasers(
     asteroid_query: Query<
         (&Collider, &Transform, &Destructible),
         (With<Asteroid>, Without<LaserRay>),
-    >
+    >,
 ) {
     let (player_entity, controls, rb_transform) = player_query.single();
 
@@ -289,7 +319,7 @@ fn lasers(
                         if !is_destructible {
                             commands.entity(entity).insert(Particle::new(
                                 Vec2::new(0., 0.),
-                                JETPACK_PARTICLE_LIFETIME,
+                                JETPACK_PARTICLE_LIFETIME, // FIXME
                             ));
                         }
                     }
@@ -519,6 +549,7 @@ fn asteroids_spawn(mut commands: Commands) {
             .insert(Destructible(true))
             .insert(asteroid_collider)
             .insert(ColliderMassProperties::Density(10.0))
+            .insert(Restitution::coefficient(0.1))
             .insert(ExternalForce {
                 torque: rng.gen_range(-0.01..0.01),
                 force: Vec2::new(rng.gen_range(-0.2..0.2), rng.gen_range(-0.2..0.2)),
@@ -532,7 +563,7 @@ fn asteroids_spawn(mut commands: Commands) {
 }
 
 fn camera(
-    mut camera_transform_query: Query<&mut Transform, (With<Camera2d>, Without<Player>)>,
+    mut camera_transform_query: Query<&mut Transform, (With<MainCamera>, Without<Player>)>,
     player_transform_query: Query<&Transform, With<Player>>,
 ) {
     let mut camera_transform = camera_transform_query.single_mut();
@@ -541,12 +572,90 @@ fn camera(
     camera_transform.translation.z = 1.;
 }
 
-fn setup(mut commands: Commands) {
-    commands.spawn(Camera2dBundle {
-        projection: OrthographicProjection {
-            scale: 0.1,
-            ..Default::default()
+fn setup(
+    mut commands: Commands,
+    windows: Res<Windows>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut post_processing_materials: ResMut<Assets<PostProcessingMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    asset_server.asset_io().watch_for_changes().unwrap();
+    let window = windows.get_primary().unwrap();
+
+    let size = Extent3d {
+        width: window.physical_width(),
+        height: window.physical_height(),
+        ..default()
+    };
+
+    // This is the texture that will be rendered to.
+    let mut image = Image {
+        texture_descriptor: TextureDescriptor {
+            label: None,
+            size,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Bgra8UnormSrgb,
+            mip_level_count: 1,
+            sample_count: 1,
+            usage: TextureUsages::TEXTURE_BINDING
+                | TextureUsages::COPY_DST
+                | TextureUsages::RENDER_ATTACHMENT,
         },
-        ..Default::default()
+        ..default()
+    };
+
+    // fill image.data with zeroes
+    image.resize(size);
+
+    let image_handle = images.add(image);
+    let post_processing_pass_layer = RenderLayers::layer((RenderLayers::TOTAL_LAYERS - 1) as u8);
+
+    commands
+        .spawn((Camera2dBundle {
+            projection: OrthographicProjection {
+                scale: 0.1,
+                ..Default::default()
+            },
+            camera: Camera {
+                target: RenderTarget::Image(image_handle.clone()),
+                priority: 0,
+                ..default()
+            },
+            ..Default::default()
+        },))
+        .insert(MainCamera);
+
+    let material_handle = post_processing_materials.add(PostProcessingMaterial {
+        source_image: image_handle,
     });
+
+    let quad_handle = meshes.add(Mesh::from(shape::Quad::new(Vec2::new(
+        size.width as f32,
+        size.height as f32,
+    ))));
+
+    commands
+        .spawn(MaterialMesh2dBundle {
+            mesh: quad_handle.into(),
+            material: material_handle,
+            transform: Transform {
+                translation: Vec3::new(0.0, 0.0, 1.5),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(post_processing_pass_layer);
+
+    // The post-processing pass camera.
+    commands
+        .spawn(Camera2dBundle {
+            camera: Camera {
+                // renders after the first main camera
+                priority: 1,
+                ..default()
+            },
+            ..Camera2dBundle::default()
+        })
+        .insert(post_processing_pass_layer);
 }
