@@ -13,8 +13,8 @@ use bevy::{
 };
 
 use bevy_prototype_lyon::{
-    prelude::{*, FillMode},
-    shapes::Polygon
+    prelude::{FillMode, *},
+    shapes::Polygon,
 };
 
 use bevy_rapier2d::prelude::*;
@@ -32,11 +32,18 @@ struct PostProcessingMaterial {
     #[texture(0)]
     #[sampler(1)]
     source_image: Handle<Image>,
+
+    #[uniform(2)]
+    pixel_block_size: f32,
+
+    #[uniform(3)]
+    chromatic_aberration_intensity: f32,
+
 }
 
 impl Material2d for PostProcessingMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/custom_material_chromatic_aberration.wgsl".into()
+        "shaders/post_processing.wgsl".into()
     }
 }
 fn main() {
@@ -47,7 +54,7 @@ fn main() {
         //.add_plugin(RapierDebugRenderPlugin::default())
         .add_plugin(Material2dPlugin::<PostProcessingMaterial>::default())
         .insert_resource(Msaa { samples: 1 })
-        .insert_resource(ClearColor(Color::hex("1d1d1d").unwrap()))
+        .insert_resource(ClearColor(Color::hex("333333").unwrap()))
         .insert_resource(RapierConfiguration {
             gravity: Vec2::new(0., 0.),
             ..Default::default()
@@ -55,7 +62,9 @@ fn main() {
         .add_startup_system(setup)
         .add_startup_stage(
             "game_setup_actors",
-            SystemStage::single(player_spawn).with_system(asteroids_spawn),
+            SystemStage::single(player_spawn)
+                .with_system(asteroids_spawn)
+                .with_system(monsters_spawn),
         )
         .add_system(player)
         .add_system(controls)
@@ -115,6 +124,9 @@ impl Particle {
 }
 
 #[derive(Component)]
+struct Monster;
+
+#[derive(Component)]
 struct LaserRay {
     height: f32,
     position: Direction,
@@ -128,6 +140,7 @@ impl LaserRay {
         }
     }
 }
+
 fn jetpack(mut commands: Commands, query: Query<(&Controls, &Transform), With<Player>>) {
     let (controls, rb_transform) = query.single();
     if controls.propulsion {
@@ -422,7 +435,7 @@ fn player(
     let vector = transform.rotation.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
     let direction = Vec2::new(vector.x, vector.y);
     if controls.propulsion {
-        impulse.impulse = direction * 0.5;
+        impulse.impulse = direction * 1.5;
     }
 }
 
@@ -475,7 +488,7 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
         let id = commands
             .spawn(RigidBody::Dynamic)
             .insert(collider)
-            .insert(ColliderMassProperties::Density(20.0))
+            .insert(ColliderMassProperties::Density(100.0))
             .insert(GeometryBuilder::build_as(
                 &shape,
                 DrawMode::Fill(FillMode::color(Color::hex("26b24a").unwrap())),
@@ -549,10 +562,9 @@ fn asteroids_spawn(mut commands: Commands) {
             .insert(Destructible(true))
             .insert(asteroid_collider)
             .insert(ColliderMassProperties::Density(10.0))
-            .insert(Restitution::coefficient(0.1))
             .insert(ExternalForce {
                 torque: rng.gen_range(-0.01..0.01),
-                force: Vec2::new(rng.gen_range(-0.2..0.2), rng.gen_range(-0.2..0.2)),
+                force: Vec2::new(rng.gen_range(-1.5..1.5), rng.gen_range(-1.5..1.5)),
             })
             .insert(GeometryBuilder::build_as(
                 &shape,
@@ -560,6 +572,30 @@ fn asteroids_spawn(mut commands: Commands) {
                 Transform::from_translation(Vec3::new(translation.x, translation.y, 0.)),
             ));
     }
+}
+
+fn monsters_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let half_body_width = 198. * PIXEL_TO_METERS;
+    let half_body_height = 184. * PIXEL_TO_METERS;
+
+    let collider = Collider::cuboid(half_body_width, half_body_height);
+    commands
+        .spawn(Monster)
+        .insert(RigidBody::Dynamic)
+        .insert(collider)
+        .insert(SpriteBundle {
+            texture: asset_server.load("monster.png"),
+            sprite: Sprite {
+                custom_size: Some(Vec2::new(half_body_width * 2., half_body_height * 2.)),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .insert(Transform::from_translation(Vec3::new(
+            -5.,
+            -5.,
+            0.,
+        )));
 }
 
 fn camera(
@@ -628,6 +664,8 @@ fn setup(
 
     let material_handle = post_processing_materials.add(PostProcessingMaterial {
         source_image: image_handle,
+        pixel_block_size: 1.5,
+        chromatic_aberration_intensity: 0.002,
     });
 
     let quad_handle = meshes.add(Mesh::from(shape::Quad::new(Vec2::new(
