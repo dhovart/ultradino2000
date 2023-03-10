@@ -19,7 +19,6 @@ fn fragment(
     #import bevy_sprite::mesh2d_vertex_output
 ) -> @location(0) vec4<f32> {
     var uv = coords_to_viewport_uv(position.xy, view.viewport);
-    // FIXME make me an uniform
     let resolution = vec2<f32>(textureDimensions(texture));
 
     let width_height_over_block_size = resolution / max(1.0, pixel_block_size);
