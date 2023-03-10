@@ -1,4 +1,4 @@
-use super::{despawn_screen, GameState};
+use super::{despawn_screen, GameState, Transition};
 
 use bevy::prelude::*;
 
@@ -80,7 +80,6 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.))
-            .insert_resource(ClearColor(Color::hex("333333").unwrap()))
             //.add_plugin(RapierDebugRenderPlugin::default())
             .insert_resource(RapierConfiguration {
                 gravity: Vec2::new(0., 0.),
@@ -88,6 +87,7 @@ impl Plugin for GamePlugin {
             })
             .add_system_set(
                 SystemSet::on_enter(GameState::Game)
+                    .with_system(transition)
                     .with_system(player_spawn)
                     .with_system(asteroids_spawn)
                     .with_system(monsters_spawn),
@@ -106,6 +106,13 @@ impl Plugin for GamePlugin {
                 SystemSet::on_exit(GameState::Game).with_system(despawn_screen::<OnGameScreen>),
             );
     }
+}
+
+
+fn transition(mut transition: ResMut<Transition>) {
+    transition.to_state = None;
+    transition.step = -0.01;
+    transition.is_playing = true;
 }
 
 // Tag component used to tag entities added on the game screen
@@ -421,7 +428,8 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
     let transform = Transform::from_xyz(0.0, half_body_height, 0.);
 
     let mut prev_id = commands
-        .spawn((Player,
+        .spawn((
+            Player,
             OnGameScreen,
             RigidBody::Dynamic,
             collider,

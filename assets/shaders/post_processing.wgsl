@@ -13,6 +13,9 @@ var<uniform> pixel_block_size: f32;
 @group(1) @binding(3)
 var<uniform> chromatic_aberration_intensity: f32;
 
+@group(1) @binding(4)
+var<uniform> opacity: f32;
+
 @fragment
 fn fragment(
     @builtin(position) position: vec4<f32>,
@@ -31,7 +34,7 @@ fn fragment(
         textureSample(texture, _sampler, uv + vec2<f32>(0.0, -chromatic_aberration_intensity)).r,
         textureSample(texture, _sampler, uv + vec2<f32>(-chromatic_aberration_intensity, 0.0)).g,
         textureSample(texture, _sampler, uv + vec2<f32>(0.0, chromatic_aberration_intensity)).b,
-        1.0
+        opacity
     );
 
     return output_color;

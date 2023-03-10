@@ -1,4 +1,4 @@
-use super::{despawn_screen, GameState, PostProcessingMaterial};
+use super::{despawn_screen, GameState, Transition};
 
 
 use bevy::{
@@ -40,7 +40,7 @@ impl Plugin for SplashPlugin {
 }
 
 #[derive(Component)]
-pub struct OnSplashScreen;
+struct OnSplashScreen;
 
 fn setup_splash(
     mut commands: Commands,
@@ -71,18 +71,18 @@ fn setup_splash(
 
 fn update(
     mut key_evr: EventReader<KeyboardInput>,
-    mut game_state: ResMut<State<GameState>>,
     mut splash_materials: ResMut<Assets<SplashMaterial>>,
+    mut transition: ResMut<Transition>,
     time: Res<Time>,
 ) {
     let time = time.elapsed().as_secs_f32();
     for (_, material) in splash_materials.iter_mut() {
         material.time = time;
     }
-    
+
     for ev in key_evr.iter() {
         match ev.state {
-            _ => game_state.set(GameState::Game).unwrap(),
+            _ => transition.is_playing = true,
         }
     }
 }

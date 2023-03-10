@@ -16,6 +16,25 @@ use bevy::{
 };
 use bevy_prototype_lyon::prelude::*;
 
+#[derive(Resource)]
+struct Transition {
+    is_playing: bool,
+    value: f32,
+    step: f32,
+    to_state: Option<GameState>
+}
+
+impl Default for Transition {
+    fn default() -> Self {
+        Self {
+            is_playing: false,
+            value: 0.,
+            step: 0.01,
+            to_state: None
+        }
+    }
+}
+
 #[derive(Component)]
 struct MainCamera;
 
@@ -38,6 +57,9 @@ struct PostProcessingMaterial {
 
     #[uniform(3)]
     chromatic_aberration_intensity: f32,
+
+    #[uniform(4)]
+    opacity: f32,
 }
 
 impl Material2d for PostProcessingMaterial {
@@ -105,6 +127,7 @@ fn setup(
         source_image: image_handle,
         pixel_block_size: 1.5,
         chromatic_aberration_intensity: 0.002,
+        opacity: 1.,
     });
 
     let quad_handle = meshes.add(Mesh::from(shape::Quad::new(Vec2::new(
@@ -143,11 +166,16 @@ fn main() {
     App::new()
         .insert_resource(Msaa { samples: 1 })
         .insert_resource(ClearColor(Color::hex("333333").unwrap()))
+        .insert_resource(Transition {
+            to_state: Some(GameState::Game),
+            ..Default::default()
+        })
         .add_plugins(DefaultPlugins)
         .add_plugin(Material2dPlugin::<PostProcessingMaterial>::default())
         .add_plugin(ShapePlugin)
         .add_startup_system(setup)
         .add_system(bevy::window::close_on_esc)
+        .add_system(transition)
         .add_state(GameState::Splash)
         .add_plugin(game::GamePlugin)
         .add_plugin(splash::SplashPlugin)
@@ -157,5 +185,28 @@ fn main() {
 fn despawn_screen<T: Component>(to_despawn: Query<Entity, With<T>>, mut commands: Commands) {
     for entity in &to_despawn {
         commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn transition(
+    mut post_processing_materials: ResMut<Assets<PostProcessingMaterial>>,
+    mut game_state: ResMut<State<GameState>>,
+    mut transition: ResMut<Transition>,
+) {
+    if transition.is_playing {
+        transition.value += transition.step;
+    }
+
+    if transition.value > 1.0 || transition.value < 0.0 {
+        transition.is_playing = false;
+        if let Some(next_state) = transition.to_state {
+            game_state.set(next_state).unwrap();
+        }
+    }
+
+    for (_, material) in post_processing_materials.iter_mut() {
+        material.chromatic_aberration_intensity = transition.value * 0.02;
+        material.pixel_block_size = transition.value * 50.;
+        material.opacity = 1. - transition.value;
     }
 }
