@@ -81,7 +81,7 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.))
             .insert_resource(ClearColor(Color::hex("333333").unwrap()))
-            .add_plugin(RapierDebugRenderPlugin::default())
+            //.add_plugin(RapierDebugRenderPlugin::default())
             .insert_resource(RapierConfiguration {
                 gravity: Vec2::new(0., 0.),
                 ..Default::default()

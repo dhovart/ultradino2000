@@ -141,6 +141,8 @@ fn setup(
 
 fn main() {
     App::new()
+        .insert_resource(Msaa { samples: 1 })
+        .insert_resource(ClearColor(Color::hex("333333").unwrap()))
         .add_plugins(DefaultPlugins)
         .add_plugin(Material2dPlugin::<PostProcessingMaterial>::default())
         .add_plugin(ShapePlugin)

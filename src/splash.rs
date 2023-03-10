@@ -45,7 +45,7 @@ pub struct OnSplashScreen;
 fn setup_splash(
     mut commands: Commands,
     mut materials: ResMut<Assets<SplashMaterial>>,
-    mut post_processing_materials: ResMut<Assets<PostProcessingMaterial>>,
+    //mut post_processing_materials: ResMut<Assets<PostProcessingMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     asset_server: Res<AssetServer>,
 ) {
