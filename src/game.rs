@@ -1,3 +1,5 @@
+// FIXME refactor in smaller plugins
+
 use super::{despawn_screen, GameState, Transition};
 
 use bevy::prelude::*;
@@ -40,13 +42,13 @@ const JETPACK_PARTICLE_COLORS: [&'static str; 3] = ["fff200", "ed1c24", "ff7f27"
 const JETPACK_PARTICLE_LIFETIME: i32 = 30;
 
 #[derive(Component)]
+struct Destructible(bool);
+
+#[derive(Component)]
 struct Particle {
     lifetime: i32,
     direction: Vec2,
 }
-
-#[derive(Component)]
-struct Destructible(bool);
 
 impl Particle {
     fn new(direction: Vec2, lifetime: i32) -> Self {
@@ -75,6 +77,65 @@ impl LaserRay {
     }
 }
 
+trait SteeringBehavior {
+    fn get_steering(&self) -> Vec2 {
+        Vec2::splat(0.)
+    }
+    fn get_angular_steering(&self) -> f32 {
+        0.
+    }
+}
+
+#[derive(Component)]
+struct SeekBehavior {
+    target: Vec2,
+    position: Vec2,
+    max_speed: f32,
+}
+
+impl SteeringBehavior for SeekBehavior {
+    fn get_steering(&self) -> Vec2 {
+        let desired = self.target - self.position;
+        desired.normalize() * self.max_speed
+    }
+}
+
+#[derive(Component)]
+struct KeepVerticalBehavior {
+    max_speed: f32,
+    angle: f32,
+}
+
+impl SteeringBehavior for KeepVerticalBehavior {
+    fn get_angular_steering(&self) -> f32 {
+        if self.angle < 0. {
+            self.max_speed
+        } else if self.angle > 0. {
+            -self.max_speed
+        } else {
+            0.
+        }
+    }
+}
+
+#[derive(Component)]
+struct FleeBehavior {
+    target: Vec2,
+    position: Vec2,
+    max_speed: f32,
+}
+
+impl SteeringBehavior for FleeBehavior {
+    fn get_steering(&self) -> Vec2 {
+        let seek = SeekBehavior {
+            target: self.target,
+            position: self.position,
+            max_speed: self.max_speed,
+        };
+        seek.get_steering() * -1.
+    }
+}
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -94,20 +155,20 @@ impl Plugin for GamePlugin {
             )
             .add_system_set(
                 SystemSet::on_update(GameState::Game)
-                    .with_system(player)
                     .with_system(controls)
+                    .with_system(player)
                     .with_system(jetpack)
                     .with_system(particles)
                     .with_system(laser_eyes)
                     .with_system(lasers)
-                    .with_system(camera),
+                    .with_system(camera)
+                    .with_system(update_monsters_behaviors),
             )
             .add_system_set(
                 SystemSet::on_exit(GameState::Game).with_system(despawn_screen::<OnGameScreen>),
             );
     }
 }
-
 
 fn transition(mut transition: ResMut<Transition>) {
     transition.to_state = None;
@@ -118,6 +179,42 @@ fn transition(mut transition: ResMut<Transition>) {
 // Tag component used to tag entities added on the game screen
 #[derive(Component)]
 struct OnGameScreen;
+
+// FIXME make behaviors generic
+fn update_monsters_behaviors(
+    mut monsters_query: Query<
+        (
+            &mut ExternalForce,
+            &Transform,
+            &mut SeekBehavior,
+            &mut KeepVerticalBehavior,
+        ),
+        With<Monster>,
+    >,
+    player_query: Query<&Transform, With<Player>>,
+) {
+    let player_transform = player_query.single();
+    for (
+        mut monster_force,
+        monster_transform,
+        mut seek_behavior,
+        mut keep_vertical_behavior
+    ) in
+        monsters_query.iter_mut()
+    {
+        seek_behavior.position = Vec2::new(
+            monster_transform.translation.x,
+            monster_transform.translation.y,
+        );
+        seek_behavior.target = Vec2::new(
+            player_transform.translation.x,
+            player_transform.translation.y,
+        );
+        keep_vertical_behavior.angle = monster_transform.rotation.z;
+        monster_force.torque = keep_vertical_behavior.get_angular_steering();
+        monster_force.force = seek_behavior.get_steering();
+    }
+}
 
 fn jetpack(mut commands: Commands, query: Query<(&Controls, &Transform), With<Player>>) {
     let (controls, rb_transform) = query.single();
@@ -240,13 +337,78 @@ fn lasers(
         if !controls.shooting {
             commands.entity(entity).despawn();
         } else {
+            laser.height += 600. * time.delta_seconds();
+            laser.height = laser.height.min(40.);
+
+            let filter = QueryFilter::default().exclude_collider(player_entity);
+            let ray_pos = Vec2::new(transform.translation.x, transform.translation.y);
+            let max_toi = laser.height;
+
+            if let Some((entity, toi)) =
+                rapier_context.cast_ray(ray_pos, direction, max_toi, true, filter)
+            {
+                laser.height = laser.height.min(toi);
+                let hit_point = ray_pos + direction * toi;
+                if let Some((
+                    asteroid_collider,
+                    &asteroid_transform,
+                    Destructible(is_destructible),
+                )) = asteroid_query.get(entity).ok()
+                {
+                    if *is_destructible {
+                        let sub_polys = subdivide(&asteroid_collider);
+                        for sub_poly in sub_polys {
+                            let points: Vec<Vec2> =
+                                sub_poly.as_convex_polygon().unwrap().points().collect();
+
+                            let is_destructible = polygon_area(&points) >= 8.;
+
+                            let shape = shapes::Polygon::from(Polygon {
+                                points: points,
+                                closed: true,
+                            });
+
+                            let mut rng = thread_rng();
+                            let entity = commands
+                                .spawn((
+                                    Asteroid,
+                                    OnGameScreen,
+                                    RigidBody::Dynamic,
+                                    sub_poly,
+                                    Destructible(is_destructible),
+                                    ExternalImpulse {
+                                        torque_impulse: rng.gen_range(-0.02..0.02),
+                                        ..Default::default()
+                                    },
+                                    GeometryBuilder::build_as(
+                                        &shape,
+                                        DrawMode::Fill(FillMode::color(
+                                            Color::hex("444444").unwrap(),
+                                        )),
+                                        asteroid_transform,
+                                    ),
+                                ))
+                                .id();
+
+                            if !is_destructible {
+                                commands.entity(entity).insert(Particle::new(
+                                    Vec2::new(0., 0.),
+                                    JETPACK_PARTICLE_LIFETIME, // FIXME
+                                ));
+                            }
+                        }
+
+                        commands.entity(entity).despawn();
+                    }
+                }
+                println!("Entity {:?} hit at point {}", entity, hit_point);
+            }
+
             let offset = match laser.position {
                 Direction::LEFT => -0.22,
                 Direction::RIGHT => 0.28,
             };
 
-            laser.height += 300. * time.delta_seconds();
-            laser.height = laser.height.min(40.);
             let line = shapes::Line(Vec2::ZERO, direction * laser.height);
             *path = ShapePath::build_as(&line);
             transform.translation = Vec3::new(
@@ -263,64 +425,6 @@ fn lasers(
                 let width = width.max(min_width);
                 *mode = DrawMode::Stroke(StrokeMode::new(color, width));
             }
-        }
-
-        let filter = QueryFilter::default().exclude_collider(player_entity);
-        let ray_pos = Vec2::new(transform.translation.x, transform.translation.y);
-        let max_toi = laser.height;
-
-        if let Some((entity, toi)) =
-            rapier_context.cast_ray(ray_pos, direction, max_toi, true, filter)
-        {
-            let hit_point = ray_pos + direction * toi;
-            if let Some((asteroid_collider, &asteroid_transform, Destructible(is_destructible))) =
-                asteroid_query.get(entity).ok()
-            {
-                if *is_destructible {
-                    let sub_polys = subdivide(&asteroid_collider);
-                    for sub_poly in sub_polys {
-                        let points: Vec<Vec2> =
-                            sub_poly.as_convex_polygon().unwrap().points().collect();
-
-                        let is_destructible = polygon_area(&points) >= 8.;
-
-                        let shape = shapes::Polygon::from(Polygon {
-                            points: points,
-                            closed: true,
-                        });
-
-                        let mut rng = thread_rng();
-                        let entity = commands
-                            .spawn((
-                                Asteroid,
-                                OnGameScreen,
-                                RigidBody::Dynamic,
-                                sub_poly,
-                                Destructible(is_destructible),
-                                ExternalImpulse {
-                                    torque_impulse: rng.gen_range(-0.02..0.02),
-                                    ..Default::default()
-                                },
-                                GeometryBuilder::build_as(
-                                    &shape,
-                                    DrawMode::Fill(FillMode::color(Color::hex("444444").unwrap())),
-                                    asteroid_transform,
-                                ),
-                            ))
-                            .id();
-
-                        if !is_destructible {
-                            commands.entity(entity).insert(Particle::new(
-                                Vec2::new(0., 0.),
-                                JETPACK_PARTICLE_LIFETIME, // FIXME
-                            ));
-                        }
-                    }
-
-                    commands.entity(entity).despawn();
-                }
-            }
-            println!("Entity {:?} hit at point {}", entity, hit_point);
         }
     }
 }
@@ -435,6 +539,7 @@ fn player_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
             collider,
             Velocity::default(),
             ExternalImpulse::default(),
+            Damping { linear_damping: 0.5, angular_damping: 1.0 },
             SpriteBundle {
                 texture: asset_server.load("dino.png"),
                 sprite: Sprite {
@@ -572,6 +677,17 @@ fn monsters_spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
         OnGameScreen,
         RigidBody::Dynamic,
         collider,
+        ExternalForce::default(),
+        Damping { linear_damping: 0.5, angular_damping: 1.0 },
+        SeekBehavior {
+            target: Vec2::ZERO,
+            position: Vec2::ZERO,
+            max_speed: 10.,
+        },
+        KeepVerticalBehavior {
+            angle: 0.,
+            max_speed: 0.8,
+        },
         SpriteBundle {
             texture: asset_server.load("monster.png"),
             sprite: Sprite {
